@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import shutil
@@ -12,6 +13,11 @@ from typing import Optional
 STATE_FILE = ".stream-deck-sync-state.json"
 PROFILES_SUBDIR = "profiles"
 PLUGINS_SUBDIR = "plugins"
+
+# File name patterns that are excluded from syncing and status comparisons by
+# default.  These files are written by Stream Deck plugins at runtime and
+# should not be tracked across machines.
+DEFAULT_EXCLUDE_PATTERNS: list[str] = ["*.log"]
 
 
 def _compute_file_hash(path: Path) -> str:
@@ -30,21 +36,31 @@ def _compute_file_hash(path: Path) -> str:
     return hasher.hexdigest()
 
 
-def compute_dir_state(directory: Path) -> dict[str, str]:
+def compute_dir_state(
+    directory: Path,
+    exclude_patterns: Optional[list[str]] = None,
+) -> dict[str, str]:
     """Compute a mapping of relative file paths to their MD5 hashes.
 
     Args:
         directory: Root directory to scan.
+        exclude_patterns: List of ``fnmatch``-style filename patterns to skip
+            (e.g. ``["*.log"]``).  When ``None``, :data:`DEFAULT_EXCLUDE_PATTERNS`
+            is used.  Pass an empty list to disable all exclusions.
 
     Returns:
         Dict mapping POSIX-style relative paths to their MD5 hashes.
         Empty dict if the directory does not exist.
     """
+    if exclude_patterns is None:
+        exclude_patterns = DEFAULT_EXCLUDE_PATTERNS
     state: dict[str, str] = {}
     if not directory.exists():
         return state
     for path in sorted(directory.rglob("*")):
         if path.is_file():
+            if any(fnmatch.fnmatch(path.name, p) for p in exclude_patterns):
+                continue
             rel_path = path.relative_to(directory).as_posix()
             state[rel_path] = _compute_file_hash(path)
     return state
@@ -117,6 +133,7 @@ def push(
     profiles_dir: Path,
     sync_dir: Path,
     plugins_dir: Optional[Path] = None,
+    exclude_patterns: Optional[list[str]] = None,
 ) -> dict:
     """Push local Stream Deck profiles (and optionally plugins) to the sync directory.
 
@@ -126,11 +143,17 @@ def push(
     A state file is written to ``sync_dir`` recording the push timestamp and
     file hashes.
 
+    Files whose names match any pattern in *exclude_patterns* are not copied
+    to the sync directory and are not tracked in the state.
+
     Args:
         profiles_dir: Path to the local Stream Deck profiles directory.
         sync_dir: Path to the shared sync directory (e.g. a cloud folder).
         plugins_dir: Path to the local Stream Deck plugins directory.  When
             supplied, plugins are included in the push.
+        exclude_patterns: List of ``fnmatch``-style filename patterns to skip
+            (e.g. ``["*.log"]``).  When ``None``, :data:`DEFAULT_EXCLUDE_PATTERNS`
+            is used.  Pass an empty list to disable all exclusions.
 
     Returns:
         Updated state dict containing ``last_push``, ``profiles_state``, and
@@ -139,6 +162,9 @@ def push(
     Raises:
         FileNotFoundError: If *profiles_dir* does not exist.
     """
+    if exclude_patterns is None:
+        exclude_patterns = DEFAULT_EXCLUDE_PATTERNS
+
     if not profiles_dir.exists():
         raise FileNotFoundError(
             f"Stream Deck profiles directory not found: {profiles_dir}"
@@ -150,9 +176,10 @@ def push(
     # Replace any previously synced profiles with the current local ones.
     if sync_profiles_dir.exists():
         shutil.rmtree(sync_profiles_dir)
-    shutil.copytree(profiles_dir, sync_profiles_dir)
+    _ignore = shutil.ignore_patterns(*exclude_patterns) if exclude_patterns is not None else None
+    shutil.copytree(profiles_dir, sync_profiles_dir, ignore=_ignore)
 
-    profiles_state = compute_dir_state(sync_profiles_dir)
+    profiles_state = compute_dir_state(sync_profiles_dir, exclude_patterns=exclude_patterns)
     state = _load_state(sync_dir)
     state["last_push"] = datetime.now(timezone.utc).isoformat()
     state["profiles_state"] = profiles_state
@@ -161,8 +188,10 @@ def push(
         sync_plugins_dir = sync_dir / PLUGINS_SUBDIR
         if sync_plugins_dir.exists():
             shutil.rmtree(sync_plugins_dir)
-        shutil.copytree(plugins_dir, sync_plugins_dir)
-        state["plugins_state"] = compute_dir_state(sync_plugins_dir)
+        shutil.copytree(plugins_dir, sync_plugins_dir, ignore=_ignore)
+        state["plugins_state"] = compute_dir_state(
+            sync_plugins_dir, exclude_patterns=exclude_patterns
+        )
 
     _save_state(sync_dir, state)
 
@@ -243,6 +272,7 @@ def status(
     profiles_dir: Path,
     sync_dir: Path,
     plugins_dir: Optional[Path] = None,
+    exclude_patterns: Optional[list[str]] = None,
 ) -> dict:
     """Compare local profiles (and optionally plugins) against the synced copies.
 
@@ -251,6 +281,10 @@ def status(
         sync_dir: Path to the shared sync directory.
         plugins_dir: Path to the local Stream Deck plugins directory.  When
             supplied, plugins are also compared.
+        exclude_patterns: List of ``fnmatch``-style filename patterns to ignore
+            during comparison (e.g. ``["*.log"]``).  When ``None``,
+            :data:`DEFAULT_EXCLUDE_PATTERNS` is used.  Pass an empty list to
+            disable all exclusions.
 
     Returns:
         Dict with the following keys:
@@ -278,9 +312,9 @@ def status(
         * ``last_push`` – ISO-8601 timestamp of the last push, or ``None``.
         * ``last_pull`` – ISO-8601 timestamp of the last pull, or ``None``.
     """
-    local_state = compute_dir_state(profiles_dir)
+    local_state = compute_dir_state(profiles_dir, exclude_patterns=exclude_patterns)
     sync_profiles_dir = sync_dir / PROFILES_SUBDIR
-    sync_state = compute_dir_state(sync_profiles_dir)
+    sync_state = compute_dir_state(sync_profiles_dir, exclude_patterns=exclude_patterns)
 
     local_keys = set(local_state.keys())
     sync_keys = set(sync_state.keys())
@@ -315,8 +349,8 @@ def status(
 
     if plugins_dir is not None:
         sync_plugins_dir = sync_dir / PLUGINS_SUBDIR
-        local_plugins = compute_dir_state(plugins_dir)
-        sync_plugins = compute_dir_state(sync_plugins_dir)
+        local_plugins = compute_dir_state(plugins_dir, exclude_patterns=exclude_patterns)
+        sync_plugins = compute_dir_state(sync_plugins_dir, exclude_patterns=exclude_patterns)
 
         lp_keys = set(local_plugins.keys())
         sp_keys = set(sync_plugins.keys())
