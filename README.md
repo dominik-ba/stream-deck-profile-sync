@@ -1,5 +1,7 @@
 # stream-deck-profile-sync
 
+[![CI](https://github.com/dominik-ba/stream-deck-profile-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/dominik-ba/stream-deck-profile-sync/actions/workflows/ci.yml)
+
 Synchronize your Elgato Stream Deck profiles and plugins across multiple computers.
 
 ## Overview
@@ -326,7 +328,13 @@ Or with a coverage report:
 pytest --cov=stream_deck_sync
 ```
 
-### 5. Deactivate the environment
+### 5. Update the changelog
+
+When you make a notable change (new feature, bug fix, breaking change), add an
+entry under the **`[Unreleased]`** section in [`CHANGELOG.md`](CHANGELOG.md)
+following the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format.
+
+### 6. Deactivate the environment
 
 When you are done, deactivate the virtual environment:
 
@@ -349,3 +357,10 @@ Python has several options for managing virtual environments:
 For most contributors, `venv` (step 2 above) is the right choice.  If you want
 even faster installs you can replace `pip install` with `uv pip install` after
 [installing uv](https://github.com/astral-sh/uv).
+
+### CI / Automated tests
+
+Every push to `main` and every pull request is tested automatically by GitHub
+Actions (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).  The
+pipeline runs the full test suite against Python 3.9 – 3.12.  The current
+status is shown by the badge at the top of this file.
