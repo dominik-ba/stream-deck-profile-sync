@@ -58,25 +58,49 @@ def init(sync_dir: Path) -> None:
     default=None,
     help="Stream Deck profiles directory (auto-detected if not provided).",
 )
-def push(sync_dir: Optional[Path], profiles_dir: Optional[Path]) -> None:
-    """Push local Stream Deck profiles to the sync directory.
+@click.option(
+    "--plugins-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Stream Deck plugins directory (auto-detected if not provided).",
+)
+@click.option(
+    "--no-plugins",
+    is_flag=True,
+    default=False,
+    help="Skip syncing plugins.",
+)
+def push(
+    sync_dir: Optional[Path],
+    profiles_dir: Optional[Path],
+    plugins_dir: Optional[Path],
+    no_plugins: bool,
+) -> None:
+    """Push local Stream Deck profiles and plugins to the sync directory.
 
-    Copies all profiles to the sync directory so they can be pulled on
-    other machines. Any previously synced profiles are replaced.
+    Copies all profiles (and plugins unless --no-plugins is set) to the sync
+    directory so they can be pulled on other machines. Any previously synced
+    data is replaced.
     """
     sync_path = _resolve_sync_dir(sync_dir)
     profiles_path = _resolve_profiles_dir(profiles_dir)
+    plugins_path = None if no_plugins else _resolve_plugins_dir_optional(plugins_dir)
 
     click.echo(f"Pushing profiles from {profiles_path}")
+    if plugins_path:
+        click.echo(f"Pushing plugins from {plugins_path}")
     click.echo(f"  → {sync_path}")
 
     try:
-        state = sync_module.push(profiles_path, sync_path)
+        state = sync_module.push(profiles_path, sync_path, plugins_dir=plugins_path)
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc))
 
-    file_count = len(state.get("profiles_state", {}))
-    click.echo(f"✓ Pushed {file_count} file(s)")
+    profile_count = len(state.get("profiles_state", {}))
+    click.echo(f"✓ Pushed {profile_count} profile file(s)")
+    if "plugins_state" in state:
+        plugin_count = len(state["plugins_state"])
+        click.echo(f"✓ Pushed {plugin_count} plugin file(s)")
     click.echo(f"  Last push: {state['last_push']}")
 
 
@@ -96,39 +120,59 @@ def push(sync_dir: Optional[Path], profiles_dir: Optional[Path]) -> None:
     help="Stream Deck profiles directory (auto-detected if not provided).",
 )
 @click.option(
+    "--plugins-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Stream Deck plugins directory (auto-detected if not provided).",
+)
+@click.option(
+    "--no-plugins",
+    is_flag=True,
+    default=False,
+    help="Skip syncing plugins.",
+)
+@click.option(
     "--no-backup",
     is_flag=True,
     default=False,
-    help="Skip creating a backup of local profiles before pulling.",
+    help="Skip creating a backup of local data before pulling.",
 )
 def pull(
     sync_dir: Optional[Path],
     profiles_dir: Optional[Path],
+    plugins_dir: Optional[Path],
+    no_plugins: bool,
     no_backup: bool,
 ) -> None:
-    """Pull Stream Deck profiles from the sync directory.
+    """Pull Stream Deck profiles and plugins from the sync directory.
 
-    Replaces local profiles with the ones from the sync directory.
-    A timestamped backup of the current local profiles is created by default.
+    Replaces local profiles (and plugins unless --no-plugins is set) with the
+    ones from the sync directory. Timestamped backups of the current local data
+    are created by default.
 
     Restart the Stream Deck application after pulling to apply the new profiles.
     """
     sync_path = _resolve_sync_dir(sync_dir)
     profiles_path = _resolve_profiles_dir(profiles_dir)
+    plugins_path = None if no_plugins else _resolve_plugins_dir_optional(plugins_dir)
 
     click.echo(f"Pulling profiles from {sync_path}")
     click.echo(f"  → {profiles_path}")
+    if plugins_path:
+        click.echo(f"  → {plugins_path} (plugins)")
 
     try:
-        state, backup_dir = sync_module.pull(
-            profiles_path, sync_path, backup=not no_backup
+        state, profiles_backup, plugins_backup = sync_module.pull(
+            profiles_path, sync_path, backup=not no_backup, plugins_dir=plugins_path
         )
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc))
 
     click.echo("✓ Profiles pulled successfully")
-    if backup_dir:
-        click.echo(f"  Backup saved at: {backup_dir}")
+    if profiles_backup:
+        click.echo(f"  Profiles backup saved at: {profiles_backup}")
+    if plugins_backup:
+        click.echo(f"  Plugins backup saved at: {plugins_backup}")
     click.echo(
         "\nRestart the Stream Deck application to apply the new profiles."
     )
@@ -149,12 +193,30 @@ def pull(
     default=None,
     help="Stream Deck profiles directory (auto-detected if not provided).",
 )
-def status(sync_dir: Optional[Path], profiles_dir: Optional[Path]) -> None:
-    """Show the sync status comparing local and synced profiles."""
+@click.option(
+    "--plugins-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Stream Deck plugins directory (auto-detected if not provided).",
+)
+@click.option(
+    "--no-plugins",
+    is_flag=True,
+    default=False,
+    help="Skip comparing plugins.",
+)
+def status(
+    sync_dir: Optional[Path],
+    profiles_dir: Optional[Path],
+    plugins_dir: Optional[Path],
+    no_plugins: bool,
+) -> None:
+    """Show the sync status comparing local and synced profiles and plugins."""
     sync_path = _resolve_sync_dir(sync_dir)
     profiles_path = _resolve_profiles_dir(profiles_dir)
+    plugins_path = None if no_plugins else _resolve_plugins_dir_optional(plugins_dir)
 
-    result = sync_module.status(profiles_path, sync_path)
+    result = sync_module.status(profiles_path, sync_path, plugins_dir=plugins_path)
 
     click.echo("Stream Deck Profile Sync Status")
     click.echo("=" * 40)
@@ -170,36 +232,97 @@ def status(sync_dir: Optional[Path], profiles_dir: Optional[Path]) -> None:
         click.echo("\n⚠  No synced profiles found. Run 'push' first.")
         return
 
-    click.echo()
-
-    total_changes = (
-        len(result["modified"])
-        + len(result["local_only"])
-        + len(result["sync_only"])
+    # ---- Profiles section -----------------------------------------------
+    click.echo("\nProfiles")
+    click.echo("-" * 8)
+    _print_section_changes(
+        result["modified"],
+        result["local_only"],
+        result["sync_only"],
+        result["in_sync"],
+        base_local=profiles_path,
+        base_sync=sync_path / sync_module.PROFILES_SUBDIR,
     )
 
-    if total_changes == 0:
-        click.echo("✓ All files are in sync")
-    else:
-        if result["modified"]:
-            click.echo(f"Modified ({len(result['modified'])}):")
-            for f in result["modified"]:
-                click.echo(f"  ~ {f}")
-        if result["local_only"]:
-            click.echo(f"Local only ({len(result['local_only'])}):")
-            for f in result["local_only"]:
-                click.echo(f"  + {f}")
-        if result["sync_only"]:
-            click.echo(f"Sync only ({len(result['sync_only'])}):")
-            for f in result["sync_only"]:
-                click.echo(f"  - {f}")
-
-    if result["in_sync"]:
-        click.echo(f"\n{len(result['in_sync'])} file(s) in sync")
+    # ---- Plugins section ------------------------------------------------
+    if plugins_path is not None:
+        click.echo("\nPlugins")
+        click.echo("-" * 7)
+        if not result["has_sync_plugins"]:
+            click.echo("  ⚠  No synced plugins found. Run 'push' first.")
+        else:
+            _print_section_changes(
+                result["plugins_modified"],
+                result["plugins_local_only"],
+                result["plugins_sync_only"],
+                result["plugins_in_sync"],
+                base_local=plugins_path,
+                base_sync=sync_path / sync_module.PLUGINS_SUBDIR,
+            )
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Display helpers
+# ---------------------------------------------------------------------------
+
+
+def _print_section_changes(
+    modified: list[str],
+    local_only: list[str],
+    sync_only: list[str],
+    in_sync: list[str],
+    base_local: Path,
+    base_sync: Path,
+) -> None:
+    """Print a human-readable diff section (profiles or plugins)."""
+    total_changes = len(modified) + len(local_only) + len(sync_only)
+
+    if total_changes == 0:
+        click.echo(f"  ✓ All {len(in_sync)} item(s) are in sync")
+        return
+
+    if modified:
+        click.echo(f"  Modified ({len(_group_names(modified))}):")
+        for folder, files in _group_names(modified).items():
+            name = sync_module.read_manifest_name(base_local, folder)
+            _print_item("~", name, folder, files)
+
+    if local_only:
+        click.echo(f"  Local only ({len(_group_names(local_only))}):")
+        for folder, files in _group_names(local_only).items():
+            name = sync_module.read_manifest_name(base_local, folder)
+            _print_item("+", name, folder, files)
+
+    if sync_only:
+        click.echo(f"  Sync only ({len(_group_names(sync_only))}):")
+        for folder, files in _group_names(sync_only).items():
+            name = sync_module.read_manifest_name(base_sync, folder)
+            _print_item("-", name, folder, files)
+
+    if in_sync:
+        click.echo(f"\n  {len(in_sync)} file(s) in sync")
+
+
+def _group_names(file_paths: list[str]) -> dict[str, list[str]]:
+    """Thin wrapper around sync_module._group_by_top_dir."""
+    return sync_module._group_by_top_dir(file_paths)
+
+
+def _print_item(
+    marker: str, name: str, folder: str, files: list[str]
+) -> None:
+    """Print one profile/plugin entry with its changed files."""
+    if name != folder:
+        click.echo(f"    {marker} {name}  [{folder}]")
+    else:
+        click.echo(f"    {marker} {folder}")
+    for f in files:
+        if f:
+            click.echo(f"        · {f}")
+
+
+# ---------------------------------------------------------------------------
+# Path resolution helpers
 # ---------------------------------------------------------------------------
 
 
@@ -225,3 +348,18 @@ def _resolve_profiles_dir(profiles_dir_arg: Optional[Path]) -> Path:
         return profiles_module.get_profiles_dir()
     except RuntimeError as exc:
         raise click.UsageError(str(exc))
+
+
+def _resolve_plugins_dir_optional(plugins_dir_arg: Optional[Path]) -> Optional[Path]:
+    """Return the plugins directory, or None if it cannot be determined.
+
+    Unlike the profiles directory, a missing plugins directory is not fatal –
+    the caller can simply skip plugin sync in that case.
+    """
+    if plugins_dir_arg is not None:
+        return plugins_dir_arg.resolve()
+    try:
+        return profiles_module.get_plugins_dir()
+    except RuntimeError:
+        return None
+

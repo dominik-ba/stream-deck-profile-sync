@@ -1,17 +1,18 @@
 # stream-deck-profile-sync
 
-Synchronize your Elgato Stream Deck profiles across multiple computers.
+Synchronize your Elgato Stream Deck profiles and plugins across multiple computers.
 
 ## Overview
 
 Stream Deck Profile Sync is a command-line tool that keeps your Elgato Stream
-Deck profiles consistent across multiple machines. It works by copying your
-profiles to a shared directory – for example a folder managed by Dropbox,
-OneDrive, Google Drive, or any other cloud-storage tool – and pulling them on
-other machines.
+Deck profiles and plugins consistent across multiple machines. It works by
+copying your profiles and plugins to a shared directory – for example a folder
+managed by Dropbox, OneDrive, Google Drive, or any other cloud-storage tool –
+and pulling them on other machines.
 
 You are in full control of when syncing happens: run `push` to publish your
-current profiles, and `pull` to apply the latest version on another machine.
+current profiles and plugins, and `pull` to apply the latest version on another
+machine.
 
 ## Supported Platforms
 
@@ -20,6 +21,14 @@ current profiles, and `pull` to apply the latest version on another machine.
 | macOS    | ✅ Supported |
 | Windows  | ✅ Supported |
 | Linux    | ❌ Not supported (Elgato Stream Deck software unavailable) |
+
+> **Cross-platform plugin compatibility**: Plugins often contain platform-specific
+> binaries (e.g. `.exe` files on Windows, `.app` bundles on macOS).  Syncing
+> plugins between a Windows machine and a macOS machine will transfer the files
+> but the plugins will not work on the other OS.  If you only sync between
+> machines running the **same operating system** (e.g. multiple Windows PCs)
+> plugin sync works perfectly.  Use `--no-plugins` to skip plugin sync when
+> working across different operating systems.
 
 ## Installation
 
@@ -46,7 +55,7 @@ Pick a folder that is already synced by your cloud-storage client, for example:
 stream-deck-sync init ~/Dropbox/stream-deck-sync
 ```
 
-### 3. Push your profiles
+### 3. Push your profiles and plugins
 
 ```bash
 stream-deck-sync push
@@ -79,7 +88,7 @@ stream-deck-sync init SYNC_DIR
 
 ### `push`
 
-Copy local profiles to the sync directory.
+Copy local profiles and plugins to the sync directory.
 
 ```
 stream-deck-sync push [OPTIONS]
@@ -87,14 +96,17 @@ stream-deck-sync push [OPTIONS]
 Options:
   -d, --sync-dir PATH      Sync directory (overrides configured value)
   -p, --profiles-dir PATH  Stream Deck profiles directory (auto-detected)
+  --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
+  --no-plugins             Skip syncing plugins
 ```
 
 ---
 
 ### `pull`
 
-Replace local profiles with the profiles from the sync directory. A
-timestamped backup of your current profiles is created automatically.
+Replace local profiles (and plugins) with the data from the sync directory.
+Timestamped backups of your current profiles and plugins are created
+automatically.
 
 ```
 stream-deck-sync pull [OPTIONS]
@@ -102,14 +114,18 @@ stream-deck-sync pull [OPTIONS]
 Options:
   -d, --sync-dir PATH      Sync directory (overrides configured value)
   -p, --profiles-dir PATH  Stream Deck profiles directory (auto-detected)
-  --no-backup              Skip creating a backup before pulling
+  --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
+  --no-plugins             Skip syncing plugins
+  --no-backup              Skip creating backups before pulling
 ```
 
 ---
 
 ### `status`
 
-Show a diff between local profiles and the synced profiles.
+Show a human-readable diff between local and synced profiles and plugins.
+Profile and plugin folders are shown by their **display name** (read from
+`manifest.json`) rather than their internal GUID folder names.
 
 ```
 stream-deck-sync status [OPTIONS]
@@ -117,6 +133,8 @@ stream-deck-sync status [OPTIONS]
 Options:
   -d, --sync-dir PATH      Sync directory (overrides configured value)
   -p, --profiles-dir PATH  Stream Deck profiles directory (auto-detected)
+  --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
+  --no-plugins             Skip comparing plugins
 ```
 
 Example output:
@@ -126,24 +144,39 @@ Stream Deck Profile Sync Status
 ========================================
 Last push: 2024-01-15T09:30:00+00:00
 
-Modified (1):
-  ~ ABC123.sdProfile/manifest.json
-Local only (1):
-  + NEW.sdProfile/manifest.json
+Profiles
+--------
+  Modified (1):
+    ~ My Twitch Controls  [ABC123.sdProfile]
+        · manifest.json
+  Local only (1):
+    + Gaming Profile  [NEW999.sdProfile]
+        · manifest.json
 
-3 file(s) in sync
+  2 file(s) in sync
+
+Plugins
+-------
+  Modified (1):
+    ~ OBS Studio  [com.example.myplugin.sdPlugin]
+        · manifest.json
+
+  2 file(s) in sync
 ```
 
 ## How it Works
 
-- **Profile location** is detected automatically from the standard Elgato
-  installation paths (configurable via `--profiles-dir`).
-- **State tracking** – after every push, a `.stream-deck-sync-state.json`
-  file is written to the sync directory. It records the timestamp and MD5
-  hash of every synced file so the `status` command can show exactly what
-  has changed.
-- **Backups** – `pull` always creates a timestamped backup folder next to
-  your profiles directory before overwriting anything (disable with
+- **Profile and plugin location** is detected automatically from the standard
+  Elgato installation paths (configurable via `--profiles-dir` /
+  `--plugins-dir`).
+- **Human-readable names** – the `status` command reads the `Name` field from
+  each profile's and plugin's `manifest.json` so you see friendly display names
+  instead of internal GUID folder names.
+- **State tracking** – after every push, a `.stream-deck-sync-state.json` file
+  is written to the sync directory. It records the timestamp and MD5 hash of
+  every synced file so the `status` command can show exactly what has changed.
+- **Backups** – `pull` always creates timestamped backup folders next to your
+  profiles and plugins directories before overwriting anything (disable with
   `--no-backup`).
 - **Tool configuration** is stored in `~/.stream-deck-sync/config.json`.
 

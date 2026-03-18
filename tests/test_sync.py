@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -34,11 +35,79 @@ def profiles_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
+def plugins_dir(tmp_path: Path) -> Path:
+    """Minimal fake Stream Deck plugins directory."""
+    plugins = tmp_path / "Plugins"
+    plugins.mkdir()
+
+    plugin1 = plugins / "com.example.myplugin.sdPlugin"
+    plugin1.mkdir()
+    (plugin1 / "manifest.json").write_text('{"Name": "My Plugin"}', encoding="utf-8")
+    (plugin1 / "plugin.exe").write_bytes(b"\x00\x01\x02")
+
+    plugin2 = plugins / "com.example.other.sdPlugin"
+    plugin2.mkdir()
+    (plugin2 / "manifest.json").write_text('{"Name": "Other Plugin"}', encoding="utf-8")
+
+    return plugins
+
+
+@pytest.fixture()
 def sync_dir(tmp_path: Path) -> Path:
     """Empty sync directory."""
     d = tmp_path / "sync"
     d.mkdir()
     return d
+
+
+# ---------------------------------------------------------------------------
+# read_manifest_name
+# ---------------------------------------------------------------------------
+
+
+class TestReadManifestName:
+    def test_returns_name_from_manifest(self, tmp_path: Path) -> None:
+        folder = tmp_path / "ABC123.sdProfile"
+        folder.mkdir()
+        (folder / "manifest.json").write_text('{"Name": "My Profile"}', encoding="utf-8")
+        assert sync.read_manifest_name(tmp_path, "ABC123.sdProfile") == "My Profile"
+
+    def test_falls_back_to_folder_name_when_no_manifest(self, tmp_path: Path) -> None:
+        assert sync.read_manifest_name(tmp_path, "ABC123.sdProfile") == "ABC123.sdProfile"
+
+    def test_falls_back_when_manifest_has_no_name(self, tmp_path: Path) -> None:
+        folder = tmp_path / "ABC123.sdProfile"
+        folder.mkdir()
+        (folder / "manifest.json").write_text('{"Other": "value"}', encoding="utf-8")
+        assert sync.read_manifest_name(tmp_path, "ABC123.sdProfile") == "ABC123.sdProfile"
+
+    def test_falls_back_when_manifest_is_invalid_json(self, tmp_path: Path) -> None:
+        folder = tmp_path / "ABC123.sdProfile"
+        folder.mkdir()
+        (folder / "manifest.json").write_text("not json", encoding="utf-8")
+        assert sync.read_manifest_name(tmp_path, "ABC123.sdProfile") == "ABC123.sdProfile"
+
+
+# ---------------------------------------------------------------------------
+# _group_by_top_dir
+# ---------------------------------------------------------------------------
+
+
+class TestGroupByTopDir:
+    def test_groups_by_first_component(self) -> None:
+        paths = [
+            "ABC123.sdProfile/manifest.json",
+            "ABC123.sdProfile/page.json",
+            "DEF456.sdProfile/manifest.json",
+        ]
+        result = sync._group_by_top_dir(paths)
+        assert set(result.keys()) == {"ABC123.sdProfile", "DEF456.sdProfile"}
+        assert "manifest.json" in result["ABC123.sdProfile"]
+        assert "page.json" in result["ABC123.sdProfile"]
+
+    def test_single_component_path(self) -> None:
+        result = sync._group_by_top_dir(["lone_file.txt"])
+        assert "lone_file.txt" in result
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +195,27 @@ class TestPush:
         sync.push(profiles_dir, sync_dir)
         assert not stale.exists()
 
+    def test_pushes_plugins_when_provided(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        state = sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        assert (sync_dir / "plugins").exists()
+        assert (sync_dir / "plugins" / "com.example.myplugin.sdPlugin").exists()
+        assert "plugins_state" in state
+        assert len(state["plugins_state"]) > 0
+
+    def test_no_plugins_in_state_when_not_provided(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        state = sync.push(profiles_dir, sync_dir)
+        assert "plugins_state" not in state
+
+    def test_plugins_dir_not_exist_is_silently_skipped(
+        self, profiles_dir: Path, sync_dir: Path, tmp_path: Path
+    ) -> None:
+        state = sync.push(profiles_dir, sync_dir, plugins_dir=tmp_path / "nope")
+        assert "plugins_state" not in state
+
 
 # ---------------------------------------------------------------------------
 # pull
@@ -136,26 +226,30 @@ class TestPull:
     def test_copies_synced_profiles_to_local(
         self, profiles_dir: Path, sync_dir: Path, tmp_path: Path
     ) -> None:
+        # Push from profiles_dir, then pull into a separate destination directory.
         sync.push(profiles_dir, sync_dir)
-        new_local = tmp_path / "new_profiles"
-        sync.pull(new_local, sync_dir, backup=False)
-        assert new_local.exists()
-        assert (new_local / "ABC123.sdProfile").exists()
+        dest_dir = tmp_path / "new_profiles"
+        sync.pull(dest_dir, sync_dir, backup=False)
+        assert dest_dir.exists()
+        assert (dest_dir / "ABC123.sdProfile").exists()
 
     def test_creates_backup_by_default(
         self, profiles_dir: Path, sync_dir: Path
     ) -> None:
         sync.push(profiles_dir, sync_dir)
-        _, backup_dir = sync.pull(profiles_dir, sync_dir, backup=True)
-        assert backup_dir is not None
-        assert backup_dir.exists()
+        _, profiles_backup, _ = sync.pull(profiles_dir, sync_dir, backup=True)
+        assert profiles_backup is not None
+        assert profiles_backup.exists()
 
     def test_no_backup_when_disabled(
         self, profiles_dir: Path, sync_dir: Path
     ) -> None:
         sync.push(profiles_dir, sync_dir)
-        _, backup_dir = sync.pull(profiles_dir, sync_dir, backup=False)
-        assert backup_dir is None
+        _, profiles_backup, plugins_backup = sync.pull(
+            profiles_dir, sync_dir, backup=False
+        )
+        assert profiles_backup is None
+        assert plugins_backup is None
 
     def test_raises_when_no_synced_profiles(
         self, profiles_dir: Path, sync_dir: Path
@@ -167,7 +261,7 @@ class TestPull:
         self, profiles_dir: Path, sync_dir: Path
     ) -> None:
         sync.push(profiles_dir, sync_dir)
-        state, _ = sync.pull(profiles_dir, sync_dir, backup=False)
+        state, _, _ = sync.pull(profiles_dir, sync_dir, backup=False)
         assert "last_pull" in state
 
     def test_replaces_local_with_synced_profiles(
@@ -181,6 +275,34 @@ class TestPull:
         sync.pull(profiles_dir, sync_dir, backup=False)
         assert not extra.exists()
         assert (profiles_dir / "ABC123.sdProfile").exists()
+
+    def test_pulls_plugins_when_provided(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path, tmp_path: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        new_plugins = tmp_path / "NewPlugins"
+        sync.pull(profiles_dir, sync_dir, backup=False, plugins_dir=new_plugins)
+        assert new_plugins.exists()
+        assert (new_plugins / "com.example.myplugin.sdPlugin").exists()
+
+    def test_creates_plugins_backup(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        _, _, plugins_backup = sync.pull(
+            profiles_dir, sync_dir, backup=True, plugins_dir=plugins_dir
+        )
+        assert plugins_backup is not None
+        assert plugins_backup.exists()
+
+    def test_no_plugins_backup_when_disabled(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        _, _, plugins_backup = sync.pull(
+            profiles_dir, sync_dir, backup=False, plugins_dir=plugins_dir
+        )
+        assert plugins_backup is None
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +364,50 @@ class TestStatus:
         result = sync.status(profiles_dir, sync_dir)
         assert result["last_push"] is not None
         assert result["last_pull"] is not None
+
+    def test_plugins_keys_empty_when_not_requested(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir)
+        result = sync.status(profiles_dir, sync_dir)
+        assert result["plugins_local_only"] == []
+        assert result["plugins_sync_only"] == []
+        assert result["plugins_modified"] == []
+        assert result["plugins_in_sync"] == []
+        assert result["has_local_plugins"] is False
+        assert result["has_sync_plugins"] is False
+
+    def test_plugins_all_in_sync_after_push(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        result = sync.status(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        assert result["plugins_modified"] == []
+        assert result["plugins_local_only"] == []
+        assert result["plugins_sync_only"] == []
+        assert len(result["plugins_in_sync"]) > 0
+        assert result["has_sync_plugins"] is True
+
+    def test_plugins_detects_local_only(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        new_plugin = plugins_dir / "com.example.new.sdPlugin" / "manifest.json"
+        new_plugin.parent.mkdir()
+        new_plugin.write_text('{"Name": "New Plugin"}', encoding="utf-8")
+        result = sync.status(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        assert "com.example.new.sdPlugin/manifest.json" in result["plugins_local_only"]
+
+    def test_plugins_detects_modified(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        (plugins_dir / "com.example.myplugin.sdPlugin" / "manifest.json").write_text(
+            '{"Name": "Updated Plugin"}', encoding="utf-8"
+        )
+        result = sync.status(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        assert (
+            "com.example.myplugin.sdPlugin/manifest.json"
+            in result["plugins_modified"]
+        )
+
