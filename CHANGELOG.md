@@ -5,14 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-03-18
 
-### Fixed
+### Changed
 
-- `status` command now shows local profiles under "Local only" when the sync
+- `status` command now shows local **profiles** under "Local only" when the sync
   directory is empty (e.g. right after `init` before the first `push`), instead
   of returning early with only a warning.
-- `status` command now shows local plugins under "Local only" when no synced
+- `status` command now shows local **plugins** under "Local only" when no synced
   plugins exist yet, consistent with the profiles behaviour.
 
 ## [0.1.0] - 2026-03-18
