@@ -405,7 +405,7 @@ def schedule_status() -> None:
     click.echo(f"✓ Scheduled {action} every {interval} minute(s).")
     if sys.platform == "darwin":
         click.echo(
-            f"  Plist: {schedule_module._get_plist_path()}"
+            f"  Plist: {schedule_module.get_plist_path()}"
         )
 
 

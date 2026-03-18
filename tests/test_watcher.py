@@ -150,17 +150,6 @@ class TestWatchState:
 # ---------------------------------------------------------------------------
 
 
-def _make_fake_watchdog():
-    """Return mock Observer + FileSystemEventHandler classes."""
-    FakeObserver = MagicMock()
-    instance = FakeObserver.return_value
-    instance.is_alive.return_value = True
-
-    FakeHandler = MagicMock
-
-    return FakeObserver, FakeHandler
-
-
 class TestWatchFunction:
     def test_raises_without_watchdog(self, tmp_path):
         """watch() raises RuntimeError when watchdog is not installed."""

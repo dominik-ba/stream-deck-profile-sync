@@ -156,7 +156,7 @@ def _build_command_args(
 # ----- macOS (launchd) --------------------------------------------------------
 
 
-def _get_plist_path() -> Path:
+def get_plist_path() -> Path:
     """Return the path to the Launch Agent plist file."""
     return (
         Path.home()
@@ -164,6 +164,10 @@ def _get_plist_path() -> Path:
         / "LaunchAgents"
         / f"{LAUNCH_AGENT_ID}.plist"
     )
+
+
+# Private alias kept for internal use within this module.
+_get_plist_path = get_plist_path
 
 
 def _build_plist(args: list[str], interval_minutes: int) -> bytes:
@@ -247,8 +251,14 @@ def _get_status_macos() -> dict:
         with open(plist_path, "rb") as fh:
             data = plistlib.load(fh)
         prog_args: list[str] = data.get("ProgramArguments", [])
-        # argv is: [python, "-m", "stream_deck_sync", action, ...]
-        action = prog_args[3] if len(prog_args) > 3 else "unknown"
+        # Expected argv: [python, "-m", "stream_deck_sync", action, ...]
+        # Index 3 is the action argument; require at least 4 elements.
+        if len(prog_args) < 4:
+            return {"enabled": True}
+        action = prog_args[3]
+        # Validate the action is a known value to handle corrupted plists.
+        if action not in ("push", "pull"):
+            action = "unknown"
         interval_seconds: int = data.get("StartInterval", 0)
         return {
             "enabled": True,

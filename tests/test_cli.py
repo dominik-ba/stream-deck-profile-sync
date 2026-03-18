@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
+from stream_deck_sync import schedule as schedule_mod
+from stream_deck_sync import sync as sync_module
+from stream_deck_sync import watcher as watcher_mod
 from stream_deck_sync.cli import cli
 
 
@@ -107,8 +112,6 @@ class TestStatusCommand:
         self, profiles_dir: Path, sync_dir: Path
     ) -> None:
         """After a push, status should show all profiles in sync."""
-        from stream_deck_sync import sync as sync_module
-
         sync_module.push(profiles_dir, sync_dir)
 
         runner = CliRunner()
@@ -129,8 +132,6 @@ class TestStatusCommand:
         self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
     ) -> None:
         """When sync dir has profiles but no plugins, show local plugins."""
-        from stream_deck_sync import sync as sync_module
-
         # Push only profiles, not plugins
         sync_module.push(profiles_dir, sync_dir)
 
@@ -182,9 +183,6 @@ class TestScheduleCommands:
 
     def test_schedule_enable_unsupported_platform(self, monkeypatch) -> None:
         """On non-macOS/Windows, schedule enable shows an error."""
-        import sys
-        from stream_deck_sync import schedule as sched
-
         monkeypatch.setattr(sys, "platform", "linux")
         runner = CliRunner()
         result = runner.invoke(
@@ -202,8 +200,6 @@ class TestScheduleCommands:
         assert "Error" in result.output
 
     def test_schedule_disable_unsupported_platform(self, monkeypatch) -> None:
-        import sys
-
         monkeypatch.setattr(sys, "platform", "linux")
         runner = CliRunner()
         result = runner.invoke(cli, ["schedule", "disable"])
@@ -211,9 +207,6 @@ class TestScheduleCommands:
 
     def test_schedule_status_no_schedule(self, monkeypatch) -> None:
         """On an unsupported platform get_schedule_status returns disabled."""
-        import sys
-        from stream_deck_sync import schedule as sched
-
         monkeypatch.setattr(sys, "platform", "linux")
         runner = CliRunner()
         result = runner.invoke(cli, ["schedule", "status"])
@@ -222,18 +215,14 @@ class TestScheduleCommands:
 
     def test_schedule_enable_mocked_macos(self, monkeypatch, tmp_path) -> None:
         """schedule enable succeeds with mocked launchctl."""
-        import sys
-        from unittest.mock import MagicMock, patch
-        from stream_deck_sync import schedule as sched
-
         plist_path = (
             tmp_path
             / "Library"
             / "LaunchAgents"
-            / f"{sched.LAUNCH_AGENT_ID}.plist"
+            / f"{schedule_mod.LAUNCH_AGENT_ID}.plist"
         )
         monkeypatch.setattr(sys, "platform", "darwin")
-        monkeypatch.setattr(sched, "_get_plist_path", lambda: plist_path)
+        monkeypatch.setattr(schedule_mod, "_get_plist_path", lambda: plist_path)
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
@@ -283,8 +272,6 @@ class TestWatchCommand:
         self, profiles_dir: Path, sync_dir: Path, monkeypatch
     ) -> None:
         """When watchdog is unavailable, watch shows a friendly error."""
-        from stream_deck_sync import watcher as watcher_mod
-
         monkeypatch.setattr(watcher_mod, "_WATCHDOG_AVAILABLE", False)
 
         runner = CliRunner()
@@ -306,9 +293,6 @@ class TestWatchCommand:
         self, profiles_dir: Path, sync_dir: Path
     ) -> None:
         """watch command starts observer and stops on interrupt."""
-        from stream_deck_sync import sync as sync_module, watcher as watcher_mod
-        from unittest.mock import MagicMock, patch
-
         # Create sync profiles so pull watcher can start
         sync_module.push(profiles_dir, sync_dir)
 

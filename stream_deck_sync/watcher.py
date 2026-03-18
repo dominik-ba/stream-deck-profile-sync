@@ -31,6 +31,7 @@ avoids accidental push → pull → push loops on a single machine.
 
 from __future__ import annotations
 
+import functools
 import threading
 import time
 from pathlib import Path
@@ -141,7 +142,7 @@ class _WatchState:
             if key not in self._timers:
                 self._timers[key] = _DebounceTimer(
                     self._debounce,
-                    lambda k=key, cb=callback, oe=on_event: self._fire(k, cb, oe),
+                    functools.partial(self._fire, key, callback, on_event),
                 )
             self._timers[key].trigger()
 
