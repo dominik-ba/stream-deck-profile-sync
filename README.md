@@ -252,7 +252,165 @@ Plugins
   2 file(s) in sync
 ```
 
-## How it Works
+---
+
+## Automatic Sync
+
+In addition to the manual `push` and `pull` workflow, stream-deck-sync
+provides **two independent methods** for automatic synchronisation.  They are
+entirely optional and can be enabled independently.
+
+### Method 1 – Schedule (OS-level recurring task)
+
+The `schedule` command group registers a recurring task with the operating
+system's built-in scheduler.  The task runs `push` or `pull` at a configurable
+interval without requiring a terminal window to remain open.  It survives
+reboots and is the **low-resource** option.
+
+> **Supported platforms:** macOS (launchd) and Windows (Task Scheduler).
+
+**Enable a push schedule (every 30 minutes):**
+
+```bash
+stream-deck-sync schedule enable --action push --interval 30
+```
+
+**Enable a pull schedule (every 15 minutes):**
+
+```bash
+stream-deck-sync schedule enable --action pull --interval 15
+```
+
+**Check the current schedule:**
+
+```bash
+stream-deck-sync schedule status
+```
+
+**Remove the schedule:**
+
+```bash
+stream-deck-sync schedule disable
+```
+
+All the same override options available on `push` / `pull` are supported:
+
+```
+stream-deck-sync schedule enable [OPTIONS]
+
+Options:
+  --action [push|pull]     Whether to push or pull  [default: push]
+  -i, --interval INTEGER   Sync interval in minutes  [default: 30]
+  -d, --sync-dir PATH      Sync directory (overrides configured value)
+  -p, --profiles-dir PATH  Stream Deck profiles directory (auto-detected)
+  --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
+  --no-plugins             Skip syncing plugins in the scheduled task
+```
+
+> **Note for pull schedules:** `--no-backup` is automatically appended to the
+> scheduled command to prevent the backup folder from accumulating on disk.
+
+#### Platform details
+
+| Platform | Mechanism | Config location |
+|----------|-----------|-----------------|
+| macOS | launchd Launch Agent | `~/Library/LaunchAgents/com.stream-deck-sync.autosync.plist` |
+| Windows | Task Scheduler | Task named `StreamDeckProfileSync` |
+
+Logs from the scheduled macOS agent are written to
+`~/Library/Logs/stream-deck-sync.log`.
+
+#### Trade-offs
+
+| Pro | Con |
+|-----|-----|
+| No process stays running in the background | Changes are applied only after the next scheduled run (up to *interval* minutes delay) |
+| Negligible CPU / memory impact between runs | Does not react immediately to changes |
+| Survives reboots automatically | Requires OS-level permissions to register (standard user rights suffice on both platforms) |
+
+---
+
+### Method 2 – File Watcher (real-time, event-driven)
+
+The `watch` command monitors the file system for changes and triggers `push`
+or `pull` automatically within seconds of a change being detected.
+
+**Requires the optional `watchdog` dependency:**
+
+```bash
+pip install "stream-deck-profile-sync[watch]"
+# or with pipx:
+pipx inject stream-deck-profile-sync watchdog
+```
+
+**Watch and push when local profiles change:**
+
+```bash
+stream-deck-sync watch --no-pull
+```
+
+**Watch and pull when the sync directory changes (another machine pushed):**
+
+```bash
+stream-deck-sync watch --no-push
+```
+
+**Both directions (default):**
+
+```bash
+stream-deck-sync watch
+```
+
+```
+stream-deck-sync watch [OPTIONS]
+
+Options:
+  --push / --no-push       Watch local dirs and auto-push on change  [default: push]
+  --pull / --no-pull       Watch sync dir and auto-pull on change  [default: pull]
+  --debounce FLOAT         Seconds of silence after last change before syncing  [default: 5.0]
+  -d, --sync-dir PATH      Sync directory (overrides configured value)
+  -p, --profiles-dir PATH  Stream Deck profiles directory (auto-detected)
+  --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
+  --no-plugins             Skip watching / syncing plugins
+```
+
+The watcher **runs in the foreground** until you press **Ctrl-C**.  To keep it
+running in the background, use your OS's standard tools:
+
+| Platform | Background command |
+|----------|--------------------|
+| macOS | `nohup stream-deck-sync watch &` |
+| Windows PowerShell | `Start-Process stream-deck-sync -ArgumentList "watch" -WindowStyle Hidden` |
+
+#### Debounce & loop prevention
+
+File-system events are *debounced*: a sync only fires after the observed
+directory has been quiet for `--debounce` seconds (default 5 s).  This
+avoids triggering on every single file write during a save operation.
+
+After each sync a *cooldown* period (double the debounce time) ignores new
+events from both directions.  This prevents an infinite push → pull → push
+loop when both directions are active on the same machine.
+
+#### Trade-offs
+
+| Pro | Con |
+|-----|-----|
+| Near-instant reaction to changes | A process must stay running continuously |
+| Reacts to each individual change | Higher CPU and memory footprint than schedule mode |
+| No minimum interval between syncs | Cloud sync client may still take time to propagate changes to other machines |
+
+---
+
+### Choosing between the two methods
+
+| | Schedule | File Watcher |
+|---|---|---|
+| **Reaction time** | Up to *interval* minutes | Seconds (after debounce) |
+| **System resources** | Minimal (only runs briefly at each interval) | A Python process running continuously |
+| **Setup complexity** | One command; survives reboots automatically | Requires keeping a process alive |
+| **Extra dependency** | None | `watchdog` |
+| **Best for** | Machines where you don't need immediate sync | Machines where you actively edit profiles often |
 
 - **Profile and plugin location** is detected automatically from the standard
   Elgato installation paths (configurable via `--profiles-dir` /

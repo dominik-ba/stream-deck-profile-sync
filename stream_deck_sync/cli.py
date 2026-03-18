@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -10,7 +11,9 @@ import click
 from . import __version__
 from . import config as config_module
 from . import profiles as profiles_module
+from . import schedule as schedule_module
 from . import sync as sync_module
+from . import watcher as watcher_module
 
 
 @click.group()
@@ -260,6 +263,253 @@ def status(
                 base_local=plugins_path,
                 base_sync=sync_path / sync_module.PLUGINS_SUBDIR,
             )
+
+
+# ---------------------------------------------------------------------------
+# schedule command group  (method 1: OS-level recurring task)
+# ---------------------------------------------------------------------------
+
+
+@cli.group()
+def schedule() -> None:
+    """Manage an automatic sync schedule (macOS launchd / Windows Task Scheduler).
+
+    Registers a recurring OS-level task that calls ``push`` or ``pull`` at a
+    fixed interval without requiring the terminal to remain open.
+
+    \b
+    Examples:
+      stream-deck-sync schedule enable --action push --interval 30
+      stream-deck-sync schedule enable --action pull --interval 15
+      stream-deck-sync schedule status
+      stream-deck-sync schedule disable
+    """
+
+
+@schedule.command("enable")
+@click.option(
+    "--action",
+    type=click.Choice(["push", "pull"]),
+    default="push",
+    show_default=True,
+    help="Whether to push or pull on schedule.",
+)
+@click.option(
+    "--interval",
+    "-i",
+    type=int,
+    default=30,
+    show_default=True,
+    help="Sync interval in minutes.",
+)
+@click.option(
+    "--sync-dir",
+    "-d",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Sync directory path (overrides configured value).",
+)
+@click.option(
+    "--profiles-dir",
+    "-p",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Stream Deck profiles directory (auto-detected if not provided).",
+)
+@click.option(
+    "--plugins-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Stream Deck plugins directory (auto-detected if not provided).",
+)
+@click.option(
+    "--no-plugins",
+    is_flag=True,
+    default=False,
+    help="Skip syncing plugins in the scheduled task.",
+)
+def schedule_enable(
+    action: str,
+    interval: int,
+    sync_dir: Optional[Path],
+    profiles_dir: Optional[Path],
+    plugins_dir: Optional[Path],
+    no_plugins: bool,
+) -> None:
+    """Enable automatic sync on a recurring schedule.
+
+    Registers an OS-level task (macOS Launch Agent / Windows Scheduled Task)
+    that runs ``push`` or ``pull`` every INTERVAL minutes.  The task survives
+    reboots and does not require a terminal to remain open.
+
+    A pull schedule automatically appends ``--no-backup`` to avoid filling
+    disk space with repeated backups.
+    """
+    if interval < 1:
+        raise click.UsageError("--interval must be at least 1 minute.")
+
+    try:
+        schedule_module.enable_schedule(
+            interval_minutes=interval,
+            action=action,
+            sync_dir=sync_dir.resolve() if sync_dir else None,
+            profiles_dir=profiles_dir.resolve() if profiles_dir else None,
+            plugins_dir=plugins_dir.resolve() if plugins_dir else None,
+            no_plugins=no_plugins,
+        )
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
+    except Exception as exc:
+        raise click.ClickException(f"Failed to register schedule: {exc}")
+
+    click.echo(
+        f"✓ Scheduled {action} every {interval} minute(s)."
+    )
+    if sys.platform == "darwin":
+        log_path = (
+            Path.home() / "Library" / "Logs" / "stream-deck-sync.log"
+        )
+        click.echo(f"  Logs: {log_path}")
+
+
+@schedule.command("disable")
+def schedule_disable() -> None:
+    """Remove the automatic sync schedule."""
+    try:
+        schedule_module.disable_schedule()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
+    except Exception as exc:
+        raise click.ClickException(f"Failed to remove schedule: {exc}")
+
+    click.echo("✓ Schedule removed.")
+
+
+@schedule.command("status")
+def schedule_status() -> None:
+    """Show whether an automatic sync schedule is configured."""
+    try:
+        info = schedule_module.get_schedule_status()
+    except Exception as exc:
+        raise click.ClickException(f"Failed to read schedule status: {exc}")
+
+    if not info.get("enabled"):
+        click.echo("No schedule configured.")
+        click.echo(
+            "Run 'stream-deck-sync schedule enable --help' to set one up."
+        )
+        return
+
+    action = info.get("action", "unknown")
+    interval = info.get("interval_minutes", "?")
+    click.echo(f"✓ Scheduled {action} every {interval} minute(s).")
+    if sys.platform == "darwin":
+        click.echo(
+            f"  Plist: {schedule_module.get_plist_path()}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# watch command  (method 2: file-system event watcher)
+# ---------------------------------------------------------------------------
+
+
+@cli.command()
+@click.option(
+    "--push/--no-push",
+    "do_push",
+    default=True,
+    help="Watch local directories and push automatically on change.",
+)
+@click.option(
+    "--pull/--no-pull",
+    "do_pull",
+    default=True,
+    help="Watch sync directory and pull automatically on change.",
+)
+@click.option(
+    "--debounce",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Seconds of silence after the last change before syncing.",
+)
+@click.option(
+    "--sync-dir",
+    "-d",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Sync directory path (overrides configured value).",
+)
+@click.option(
+    "--profiles-dir",
+    "-p",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Stream Deck profiles directory (auto-detected if not provided).",
+)
+@click.option(
+    "--plugins-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Stream Deck plugins directory (auto-detected if not provided).",
+)
+@click.option(
+    "--no-plugins",
+    is_flag=True,
+    default=False,
+    help="Skip watching / syncing plugins.",
+)
+def watch(
+    do_push: bool,
+    do_pull: bool,
+    debounce: float,
+    sync_dir: Optional[Path],
+    profiles_dir: Optional[Path],
+    plugins_dir: Optional[Path],
+    no_plugins: bool,
+) -> None:
+    """Watch for file changes and automatically push or pull.
+
+    Requires the optional ``watchdog`` dependency:
+
+    \b
+        pip install "stream-deck-profile-sync[watch]"
+
+    Runs in the foreground until interrupted with Ctrl-C.  When *both* push
+    and pull are active a post-sync cooldown prevents accidental loops where
+    a push to the sync directory immediately triggers a pull.
+
+    \b
+    Examples:
+      stream-deck-sync watch                   # push + pull
+      stream-deck-sync watch --no-pull         # push only
+      stream-deck-sync watch --no-push         # pull only
+      stream-deck-sync watch --debounce 10
+    """
+    if not do_push and not do_pull:
+        raise click.UsageError(
+            "At least one of --push or --pull must be enabled."
+        )
+
+    sync_path = _resolve_sync_dir(sync_dir)
+    profiles_path = _resolve_profiles_dir(profiles_dir)
+    plugins_path = None if no_plugins else _resolve_plugins_dir_optional(plugins_dir)
+
+    try:
+        watcher_module.watch(
+            profiles_dir=profiles_path,
+            sync_dir=sync_path,
+            plugins_dir=plugins_path,
+            push=do_push,
+            pull=do_pull,
+            debounce_seconds=debounce,
+            on_event=click.echo,
+        )
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
+    except ValueError as exc:
+        raise click.UsageError(str(exc))
 
 
 # ---------------------------------------------------------------------------

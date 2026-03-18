@@ -17,9 +17,13 @@ dependencies = [
 stream-deck-sync = "stream_deck_sync.cli:cli"
 
 [project.optional-dependencies]
+watch = [
+    "watchdog>=2.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "watchdog>=2.0",
 ]
 
 [tool.pytest.ini_options]
