@@ -230,7 +230,8 @@ def status(
         click.echo("\n⚠  Local profiles directory not found.")
     if not result["has_sync"]:
         click.echo("\n⚠  No synced profiles found. Run 'push' first.")
-        return
+        if not result["has_local"]:
+            return
 
     # ---- Profiles section -----------------------------------------------
     click.echo("\nProfiles")
@@ -250,7 +251,7 @@ def status(
         click.echo("-" * 7)
         if not result["has_sync_plugins"]:
             click.echo("  ⚠  No synced plugins found. Run 'push' first.")
-        else:
+        if result["has_local_plugins"] or result["has_sync_plugins"]:
             _print_section_changes(
                 result["plugins_modified"],
                 result["plugins_local_only"],
