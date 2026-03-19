@@ -230,6 +230,7 @@ Options:
   --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
   --no-plugins             Skip comparing plugins
   --exclude PATTERN        Extra filename pattern to exclude (repeatable)
+  --diff                   Show a unified diff of each modified file's content
 ```
 
 Example output:
@@ -244,6 +245,13 @@ Profiles
   Modified (1):
     ~ My Twitch Controls  [ABC123.sdProfile]
         · manifest.json
+          --- synced
+          +++ local
+          @@ -1,3 +1,3 @@
+           {
+          -  "Name": "My Twitch Controls"
+          +  "Name": "My Twitch Controls v2"
+           }
   Local only (1):
     + Gaming Profile  [NEW999.sdProfile]
         · manifest.json

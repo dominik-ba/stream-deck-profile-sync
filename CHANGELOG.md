@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--diff` option on the `status` command.  When provided, a unified diff of
+  each modified file's content is printed directly below the file path, making
+  it easy to see exactly what changed without leaving the terminal.  Binary
+  files are detected automatically and reported as `(binary file)` instead of
+  attempting a textual diff.
+
 ## [0.3.0] - 2026-03-19
 
 ### Added
