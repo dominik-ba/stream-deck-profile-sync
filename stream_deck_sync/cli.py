@@ -70,11 +70,22 @@ def init(sync_dir: Path) -> None:
     default=False,
     help="Skip syncing plugins.",
 )
+@click.option(
+    "--exclude",
+    multiple=True,
+    metavar="PATTERN",
+    help=(
+        "Additional filename pattern to exclude from syncing "
+        "(e.g. '*.tmp').  May be specified multiple times.  "
+        "The built-in defaults (*.log) are always applied."
+    ),
+)
 def push(
     sync_dir: Optional[Path],
     profiles_dir: Optional[Path],
     plugins_dir: Optional[Path],
     no_plugins: bool,
+    exclude: tuple[str, ...],
 ) -> None:
     """Push local Stream Deck profiles and plugins to the sync directory.
 
@@ -91,8 +102,14 @@ def push(
         click.echo(f"Pushing plugins from {plugins_path}")
     click.echo(f"  → {sync_path}")
 
+    exclude_patterns = list(sync_module.DEFAULT_EXCLUDE_PATTERNS) + list(exclude)
     try:
-        state = sync_module.push(profiles_path, sync_path, plugins_dir=plugins_path)
+        state = sync_module.push(
+            profiles_path,
+            sync_path,
+            plugins_dir=plugins_path,
+            exclude_patterns=exclude_patterns,
+        )
     except FileNotFoundError as exc:
         raise click.ClickException(str(exc))
 
@@ -205,18 +222,35 @@ def pull(
     default=False,
     help="Skip comparing plugins.",
 )
+@click.option(
+    "--exclude",
+    multiple=True,
+    metavar="PATTERN",
+    help=(
+        "Additional filename pattern to exclude from comparison "
+        "(e.g. '*.tmp').  May be specified multiple times.  "
+        "The built-in defaults (*.log) are always applied."
+    ),
+)
 def status(
     sync_dir: Optional[Path],
     profiles_dir: Optional[Path],
     plugins_dir: Optional[Path],
     no_plugins: bool,
+    exclude: tuple[str, ...],
 ) -> None:
     """Show the sync status comparing local and synced profiles and plugins."""
     sync_path = _resolve_sync_dir(sync_dir)
     profiles_path = _resolve_profiles_dir(profiles_dir)
     plugins_path = None if no_plugins else _resolve_plugins_dir_optional(plugins_dir)
 
-    result = sync_module.status(profiles_path, sync_path, plugins_dir=plugins_path)
+    exclude_patterns = list(sync_module.DEFAULT_EXCLUDE_PATTERNS) + list(exclude)
+    result = sync_module.status(
+        profiles_path,
+        sync_path,
+        plugins_dir=plugins_path,
+        exclude_patterns=exclude_patterns,
+    )
 
     click.echo("Stream Deck Profile Sync Status")
     click.echo("=" * 40)

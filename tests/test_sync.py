@@ -147,6 +147,36 @@ class TestComputeDirState:
         result = sync.compute_dir_state(tmp_path)
         assert "subdir/file.txt" in result
 
+    def test_excludes_log_files_by_default(self, tmp_path: Path) -> None:
+        (tmp_path / "data.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "pluginlog.log").write_text("log data", encoding="utf-8")
+        result = sync.compute_dir_state(tmp_path)
+        assert "data.json" in result
+        assert "pluginlog.log" not in result
+
+    def test_excludes_files_matching_custom_pattern(self, tmp_path: Path) -> None:
+        (tmp_path / "data.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "cache.tmp").write_text("temp", encoding="utf-8")
+        result = sync.compute_dir_state(tmp_path, exclude_patterns=["*.tmp"])
+        assert "data.json" in result
+        assert "cache.tmp" not in result
+
+    def test_empty_exclude_patterns_includes_all_files(self, tmp_path: Path) -> None:
+        (tmp_path / "data.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "pluginlog.log").write_text("log data", encoding="utf-8")
+        result = sync.compute_dir_state(tmp_path, exclude_patterns=[])
+        assert "data.json" in result
+        assert "pluginlog.log" in result
+
+    def test_excludes_log_files_in_subdirectories(self, tmp_path: Path) -> None:
+        plugin = tmp_path / "com.example.plugin.sdPlugin"
+        plugin.mkdir()
+        (plugin / "manifest.json").write_text('{"Name": "Plugin"}', encoding="utf-8")
+        (plugin / "pluginlog.log").write_text("log data", encoding="utf-8")
+        result = sync.compute_dir_state(tmp_path)
+        assert "com.example.plugin.sdPlugin/manifest.json" in result
+        assert "com.example.plugin.sdPlugin/pluginlog.log" not in result
+
 
 # ---------------------------------------------------------------------------
 # push
@@ -215,6 +245,75 @@ class TestPush:
     ) -> None:
         state = sync.push(profiles_dir, sync_dir, plugins_dir=tmp_path / "nope")
         assert "plugins_state" not in state
+
+    def test_excluded_files_not_copied_to_sync_dir(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        (profiles_dir / "ABC123.sdProfile" / "pluginlog.log").write_text(
+            "log data", encoding="utf-8"
+        )
+        sync.push(profiles_dir, sync_dir)
+        assert not (
+            sync_dir / "profiles" / "ABC123.sdProfile" / "pluginlog.log"
+        ).exists()
+
+    def test_excluded_files_not_in_profiles_state(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        (profiles_dir / "ABC123.sdProfile" / "pluginlog.log").write_text(
+            "log data", encoding="utf-8"
+        )
+        state = sync.push(profiles_dir, sync_dir)
+        assert not any(
+            k.endswith("pluginlog.log") for k in state["profiles_state"]
+        )
+
+    def test_excluded_plugin_files_not_copied_to_sync_dir(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        (plugins_dir / "com.example.myplugin.sdPlugin" / "pluginlog.log").write_text(
+            "log data", encoding="utf-8"
+        )
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        assert not (
+            sync_dir
+            / "plugins"
+            / "com.example.myplugin.sdPlugin"
+            / "pluginlog.log"
+        ).exists()
+
+    def test_excluded_plugin_files_not_in_plugins_state(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        (plugins_dir / "com.example.myplugin.sdPlugin" / "pluginlog.log").write_text(
+            "log data", encoding="utf-8"
+        )
+        state = sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        assert not any(
+            k.endswith("pluginlog.log") for k in state["plugins_state"]
+        )
+
+    def test_custom_exclude_patterns_applied_on_push(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        (profiles_dir / "ABC123.sdProfile" / "cache.tmp").write_text(
+            "temp", encoding="utf-8"
+        )
+        sync.push(profiles_dir, sync_dir, exclude_patterns=["*.tmp"])
+        assert not (
+            sync_dir / "profiles" / "ABC123.sdProfile" / "cache.tmp"
+        ).exists()
+
+    def test_empty_exclude_patterns_copies_log_files(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        (profiles_dir / "ABC123.sdProfile" / "pluginlog.log").write_text(
+            "log data", encoding="utf-8"
+        )
+        sync.push(profiles_dir, sync_dir, exclude_patterns=[])
+        assert (
+            sync_dir / "profiles" / "ABC123.sdProfile" / "pluginlog.log"
+        ).exists()
 
 
 # ---------------------------------------------------------------------------
@@ -409,5 +508,44 @@ class TestStatus:
         assert (
             "com.example.myplugin.sdPlugin/manifest.json"
             in result["plugins_modified"]
+        )
+
+    def test_log_files_not_reported_as_modified(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        # Simulate a plugin writing a log file locally after the push.
+        (plugins_dir / "com.example.myplugin.sdPlugin" / "pluginlog.log").write_text(
+            "new log entry", encoding="utf-8"
+        )
+        result = sync.status(profiles_dir, sync_dir, plugins_dir=plugins_dir)
+        assert result["plugins_modified"] == []
+        assert not any(
+            k.endswith("pluginlog.log") for k in result["plugins_local_only"]
+        )
+
+    def test_log_files_excluded_by_default_in_profiles_too(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir)
+        (profiles_dir / "ABC123.sdProfile" / "debug.log").write_text(
+            "debug info", encoding="utf-8"
+        )
+        result = sync.status(profiles_dir, sync_dir)
+        assert result["modified"] == []
+        assert not any(k.endswith("debug.log") for k in result["local_only"])
+
+    def test_empty_exclude_patterns_reports_log_file_changes(
+        self, profiles_dir: Path, plugins_dir: Path, sync_dir: Path
+    ) -> None:
+        sync.push(profiles_dir, sync_dir, plugins_dir=plugins_dir, exclude_patterns=[])
+        (plugins_dir / "com.example.myplugin.sdPlugin" / "pluginlog.log").write_text(
+            "new log entry", encoding="utf-8"
+        )
+        result = sync.status(
+            profiles_dir, sync_dir, plugins_dir=plugins_dir, exclude_patterns=[]
+        )
+        assert any(
+            k.endswith("pluginlog.log") for k in result["plugins_local_only"]
         )
 

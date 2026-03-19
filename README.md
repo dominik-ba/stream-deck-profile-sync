@@ -186,6 +186,7 @@ Options:
   -p, --profiles-dir PATH  Stream Deck profiles directory (auto-detected)
   --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
   --no-plugins             Skip syncing plugins
+  --exclude PATTERN        Extra filename pattern to exclude (repeatable)
 ```
 
 ---
@@ -223,6 +224,7 @@ Options:
   -p, --profiles-dir PATH  Stream Deck profiles directory (auto-detected)
   --plugins-dir PATH       Stream Deck plugins directory (auto-detected)
   --no-plugins             Skip comparing plugins
+  --exclude PATTERN        Extra filename pattern to exclude (repeatable)
 ```
 
 Example output:
@@ -263,6 +265,11 @@ Plugins
 - **State tracking** – after every push, a `.stream-deck-sync-state.json` file
   is written to the sync directory. It records the timestamp and MD5 hash of
   every synced file so the `status` command can show exactly what has changed.
+- **File exclusions** – runtime-only files are excluded from syncing and status
+  comparisons by default.  Currently `*.log` files (e.g. `pluginlog.log` that
+  Stream Deck plugins write continuously) are excluded so they never appear as
+  "Modified" after a clean push.  Use `--exclude PATTERN` on `push` or `status`
+  to add further patterns on top of the built-in defaults.
 - **Backups** – `pull` always creates timestamped backup folders next to your
   profiles and plugins directories before overwriting anything (disable with
   `--no-backup`).
