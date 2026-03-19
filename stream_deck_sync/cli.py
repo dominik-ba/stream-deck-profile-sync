@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +12,9 @@ from . import __version__
 from . import config as config_module
 from . import profiles as profiles_module
 from . import sync as sync_module
+
+# Number of bytes examined at the start of a file to decide whether it is binary.
+_BINARY_CHECK_SIZE = 8192
 
 
 @click.group()
@@ -232,12 +236,20 @@ def pull(
         "The built-in defaults (*.log) are always applied."
     ),
 )
+@click.option(
+    "--diff",
+    "show_diff",
+    is_flag=True,
+    default=False,
+    help="Show a unified diff of each modified file's content.",
+)
 def status(
     sync_dir: Optional[Path],
     profiles_dir: Optional[Path],
     plugins_dir: Optional[Path],
     no_plugins: bool,
     exclude: tuple[str, ...],
+    show_diff: bool,
 ) -> None:
     """Show the sync status comparing local and synced profiles and plugins."""
     sync_path = _resolve_sync_dir(sync_dir)
@@ -277,6 +289,7 @@ def status(
         result["in_sync"],
         base_local=profiles_path,
         base_sync=sync_path / sync_module.PROFILES_SUBDIR,
+        show_diff=show_diff,
     )
 
     # ---- Plugins section ------------------------------------------------
@@ -293,6 +306,7 @@ def status(
                 result["plugins_in_sync"],
                 base_local=plugins_path,
                 base_sync=sync_path / sync_module.PLUGINS_SUBDIR,
+                show_diff=show_diff,
             )
 
 
@@ -308,6 +322,7 @@ def _print_section_changes(
     in_sync: list[str],
     base_local: Path,
     base_sync: Path,
+    show_diff: bool = False,
 ) -> None:
     """Print a human-readable diff section (profiles or plugins)."""
     total_changes = len(modified) + len(local_only) + len(sync_only)
@@ -320,7 +335,12 @@ def _print_section_changes(
         click.echo(f"  Modified ({len(_group_names(modified))}):")
         for folder, files in _group_names(modified).items():
             name = sync_module.read_manifest_name(base_local, folder)
-            _print_item("~", name, folder, files)
+            _print_item(
+                "~", name, folder, files,
+                show_diff=show_diff,
+                base_local=base_local,
+                base_sync=base_sync,
+            )
 
     if local_only:
         click.echo(f"  Local only ({len(_group_names(local_only))}):")
@@ -344,7 +364,13 @@ def _group_names(file_paths: list[str]) -> dict[str, list[str]]:
 
 
 def _print_item(
-    marker: str, name: str, folder: str, files: list[str]
+    marker: str,
+    name: str,
+    folder: str,
+    files: list[str],
+    show_diff: bool = False,
+    base_local: Optional[Path] = None,
+    base_sync: Optional[Path] = None,
 ) -> None:
     """Print one profile/plugin entry with its changed files."""
     if name != folder:
@@ -354,6 +380,50 @@ def _print_item(
     for f in files:
         if f:
             click.echo(f"        · {f}")
+            if (
+                show_diff
+                and marker == "~"
+                and base_local is not None
+                and base_sync is not None
+            ):
+                _show_diff(base_local / folder / f, base_sync / folder / f)
+
+
+def _show_diff(local_file: Path, sync_file: Path) -> None:
+    """Print a unified diff between the local and synced versions of a file.
+
+    Binary files are identified by the presence of null bytes and are reported
+    without attempting a textual diff.
+
+    Args:
+        local_file: Path to the local copy of the file.
+        sync_file: Path to the synced copy of the file.
+    """
+    try:
+        local_bytes = local_file.read_bytes()
+        sync_bytes = sync_file.read_bytes()
+    except OSError:
+        click.echo("          (could not read file)")
+        return
+
+    if b"\x00" in local_bytes[:_BINARY_CHECK_SIZE] or b"\x00" in sync_bytes[:_BINARY_CHECK_SIZE]:
+        click.echo("          (binary file)")
+        return
+
+    local_lines = local_bytes.decode("utf-8", errors="replace").splitlines(keepends=True)
+    sync_lines = sync_bytes.decode("utf-8", errors="replace").splitlines(keepends=True)
+
+    diff = list(
+        difflib.unified_diff(
+            sync_lines,
+            local_lines,
+            fromfile="synced",
+            tofile="local",
+            lineterm="",
+        )
+    )
+    for line in diff:
+        click.echo(f"          {line}")
 
 
 # ---------------------------------------------------------------------------
