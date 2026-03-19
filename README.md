@@ -78,12 +78,16 @@ modern, recommended way to install CLI tools.
    # After running ensurepath, open a new terminal so the PATH change takes effect.
    ```
 
-2. Install stream-deck-profile-sync (specify the version or use main branch):
+2. Install stream-deck-profile-sync (specify the version):
 
    ```bash
    pipx install git+https://github.com/dominik-ba/stream-deck-profile-sync.git@v0.3.0
-   # or pipx install git+https://github.com/dominik-ba/stream-deck-profile-sync.git
    ```
+
+  - If you use this for testing, you need to use the main or respective development branch and force a reinstallation as the version of the module probably did not change yet:
+    ```bash
+    pipx install --force git+https://github.com/dominik-ba/stream-deck-profile-sync.git
+    ```
 
 3. Verify the installation:
 
