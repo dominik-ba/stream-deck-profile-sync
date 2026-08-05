@@ -278,3 +278,69 @@ class TestStatusDiff:
         assert "Brand New" in result.output
         # No diff header for local-only entries
         assert "--- synced" not in result.output
+
+    def test_diff_lines_are_not_followed_by_blank_lines(
+        self, profiles_dir: Path, sync_dir: Path
+    ) -> None:
+        """Diff content lines must not be separated by blank lines.
+
+        difflib.unified_diff() yields lines that still carry their trailing
+        "\\n" from splitlines(keepends=True); echoing them with click.echo()
+        (which appends its own newline) must not double up into a blank
+        line after every diff line.
+        """
+        import difflib
+
+        from stream_deck_sync import sync as sync_module
+
+        # Every line (synced and local) ends with "\n" so the retained
+        # trailing newline from splitlines(keepends=True) affects every
+        # diff line, not just the last one.
+        sync_content = "line1\nline2\nline3\n"
+        local_content = "line1\nCHANGED\nline3\n"
+
+        (profiles_dir / "ABC123.sdProfile" / "page.json").write_text(
+            sync_content, encoding="utf-8"
+        )
+        sync_module.push(profiles_dir, sync_dir)
+        (profiles_dir / "ABC123.sdProfile" / "page.json").write_text(
+            local_content, encoding="utf-8"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "status",
+                "--diff",
+                "--sync-dir", str(sync_dir),
+                "--profiles-dir", str(profiles_dir),
+                "--no-plugins",
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Recompute the expected unified diff the same way _show_diff does,
+        # stripping the trailing newline each diff content line carries.
+        sync_lines = sync_content.splitlines(keepends=True)
+        local_lines = local_content.splitlines(keepends=True)
+        expected_diff = list(
+            difflib.unified_diff(
+                sync_lines, local_lines, fromfile="synced", tofile="local", lineterm=""
+            )
+        )
+        assert len(expected_diff) > 3  # sanity: header + multiple content lines
+
+        # Each diff line, once indented, must appear back-to-back (single
+        # "\n" between lines) with no inserted blank line.
+        expected_block = "\n".join(
+            f"          {line.rstrip(chr(10))}" for line in expected_diff
+        )
+        assert expected_block in result.output
+
+        # Direct line-by-line check for extra safety: no blank line inside
+        # the diff region.
+        lines = result.output.split("\n")
+        start_index = lines.index("          --- synced")
+        diff_region = lines[start_index : start_index + len(expected_diff)]
+        assert "" not in diff_region
