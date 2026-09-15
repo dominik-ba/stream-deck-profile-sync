@@ -278,3 +278,35 @@ class TestStatusDiff:
         assert "Brand New" in result.output
         # No diff header for local-only entries
         assert "--- synced" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# _show_diff helper
+# ---------------------------------------------------------------------------
+
+
+class TestShowDiff:
+    def test_no_blank_lines_between_diff_content(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Diff content lines must not print with an embedded newline.
+
+        Regression test: difflib.unified_diff() with lineterm="" only strips
+        terminators from its own header lines; content lines still carry
+        whatever line ending was present in the input (since the inputs are
+        built with splitlines(keepends=True)), so a naive echo previously
+        printed a spurious blank line after every content line.
+        """
+        from stream_deck_sync.cli import _show_diff
+
+        local_file = tmp_path / "local.txt"
+        sync_file = tmp_path / "sync.txt"
+        local_file.write_text("line1\nline2\nline3\n", encoding="utf-8")
+        sync_file.write_text("line1\nlineTWO\nline3\n", encoding="utf-8")
+
+        _show_diff(local_file, sync_file)
+
+        output_lines = capsys.readouterr().out.splitlines()
+        assert "" not in output_lines
+        assert "          -lineTWO" in output_lines
+        assert "          +line2" in output_lines
