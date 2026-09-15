@@ -423,7 +423,7 @@ def _show_diff(local_file: Path, sync_file: Path) -> None:
         )
     )
     for line in diff:
-        click.echo(f"          {line}")
+        click.echo(f"          {line.rstrip(chr(10))}")
 
 
 # ---------------------------------------------------------------------------
